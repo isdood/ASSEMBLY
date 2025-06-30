@@ -9,6 +9,14 @@ section .data
     PADDLE_CHAR     db '|', 0
     BALL_CHAR       db 'O', 0
     
+    ; Debug messages
+    debug_start_msg      db 'Starting Pong game...', 10, 0
+    debug_termios_msg    db 'Setting up terminal...', 10, 0
+    debug_ioctl_msg      db 'Calling ioctl...', 10, 0
+    debug_ioctl_done_msg db 'ioctl completed', 10, 0
+    debug_game_loop_msg  db 'Entering game loop...', 10, 0
+    debug_exit_msg       db 'Exiting game...', 10, 0
+    
     ; Terminal control sequences
     CLEAR_SCREEN    db 27, '[2J', 27, '[H', 0
     HIDE_CURSOR     db 27, '[?25l', 0
@@ -53,6 +61,36 @@ section .bss
 
 section .text
 global _start
+
+; Print a string to stderr (for debug)
+; rsi = string address
+debug_print:
+    push rax
+    push rdi
+    push rsi
+    push rdx
+    
+    ; Calculate string length
+    mov rdi, rsi
+    xor rcx, rcx
+    not rcx
+    xor al, al
+    cld
+    repne scasb
+    not rcx
+    dec rcx
+    
+    ; Write to stderr (file descriptor 2)
+    mov rax, SYS_WRITE
+    mov rdi, 2           ; stderr
+    mov rdx, rcx         ; length
+    syscall
+    
+    pop rdx
+    pop rsi
+    pop rdi
+    pop rax
+    ret
 
 ; Print a string to stdout
 ; rsi = string address
@@ -209,6 +247,11 @@ setup_terminal:
     push rsi
     push rdx
     
+    mov rsi, debug_termios_msg
+    call debug_print
+    mov rsi, debug_ioctl_msg
+    call debug_print
+    
     ; Get current terminal settings
     mov rax, SYS_IOCTL
     mov rdi, STDIN
@@ -225,6 +268,9 @@ setup_terminal:
     mov rsi, TCSETS
     lea rdx, [termios]
     syscall
+    
+    mov rsi, debug_ioctl_done_msg
+    call debug_print
     
     ; Hide cursor
     mov rax, SYS_WRITE
@@ -416,6 +462,10 @@ update_ball:
 
 ; Main game loop
 _start:
+    ; Debug message
+    mov rsi, debug_start_msg
+    call debug_print
+    
     ; Set up terminal
     call setup_terminal
     
@@ -433,6 +483,9 @@ _start:
     mov rsi, CLEAR_SCREEN
     mov rdx, 7
     syscall
+
+    mov rsi, debug_game_loop_msg
+    call debug_print
 
 game_loop:
     ; Clear screen
@@ -470,6 +523,10 @@ game_loop:
     jmp game_loop
 
 exit:
+    ; Debug message
+    mov rsi, debug_exit_msg
+    call debug_print
+    
     ; Restore terminal settings
     call restore_terminal
     
