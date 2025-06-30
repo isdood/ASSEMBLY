@@ -72,8 +72,29 @@ simple_pong: simple_pong.o
 simple_pong.o: simple_pong.asm
 	$(NASM) $(NASMFLAGS) -o simple_pong.o simple_pong.asm
 
+# Simple Pong game (fixed version)
+simple_pong_fixed: simple_pong_fixed.o
+	$(LD) -o simple_pong_fixed simple_pong_fixed.o
+
+simple_pong_fixed.o: simple_pong_fixed.asm
+	$(NASM) $(NASMFLAGS) -o simple_pong_fixed.o simple_pong_fixed.asm
+
+# Terminal test program
+terminal_test: terminal_test.o
+	$(LD) -o terminal_test terminal_test.o
+
+terminal_test.o: terminal_test.asm
+	$(NASM) $(NASMFLAGS) -o terminal_test.o terminal_test.asm
+
+# Minimal Pong game
+minimal_pong: minimal_pong.o
+	$(LD) -o minimal_pong minimal_pong.o
+
+minimal_pong.o: minimal_pong.asm
+	$(NASM) $(NASMFLAGS) -o minimal_pong.o minimal_pong.asm
+
 # Clean build files
 clean:
-	rm -f *.o pong simple_pong pong_fixed mini_pong simple_game test_game hello enhanced_pong debug_pong
+	rm -f *.o pong simple_pong pong_fixed mini_pong simple_game test_game hello enhanced_pong debug_pong simple_pong_fixed terminal_test terminal_test
 
 .PHONY: all clean
