@@ -2,12 +2,29 @@
 ; Simplified version with working terminal handling
 
 section .data
+    ; Syscall numbers
+    SYS_READ        equ 0
+    SYS_WRITE       equ 1
+    SYS_IOCTL       equ 16
+    SYS_NANOSLEEP   equ 35
+    SYS_FSYNC       equ 74
+    SYS_EXIT        equ 60
+    
+    ; File descriptors
+    STDIN           equ 0
+    STDOUT          equ 1
+    
     ; Game constants
     SCREEN_WIDTH    equ 80
     SCREEN_HEIGHT   equ 24
     PADDLE_HEIGHT   equ 4
     PADDLE_CHAR     db '|', 0
     BALL_CHAR       db 'O', 0
+    
+    ; Delay time for nanosleep (50ms = 20 FPS)
+    delay_time:
+        tv_sec  dq 0          ; seconds
+        tv_nsec dq 50000000    ; nanoseconds (50,000,000 ns = 50ms)
     
     ; Debug messages
     debug_start_msg      db 'Starting Pong game...', 10, 0
@@ -19,6 +36,7 @@ section .data
     
     ; Terminal control sequences
     CLEAR_SCREEN    db 27, '[2J', 27, '[H', 0
+    CURSOR_HOME     db 27, '[H', 0
     HIDE_CURSOR     db 27, '[?25l', 0
     SHOW_CURSOR     db 27, '[?25h', 0
     
@@ -58,6 +76,9 @@ section .bss
     
     ; Cursor position buffer
     cursor_buf      resb 16
+    
+    ; Frame buffer (80x24 + newlines + null)
+    frame_buffer    resb (80 * 24) + 24 + 1
 
 section .text
 global _start
@@ -171,7 +192,62 @@ set_cursor_pos:
     pop rax
     ret
 
-; Draw a paddle
+; Initialize frame buffer with spaces and borders
+init_frame_buffer:
+    push rdi
+    push rcx
+    push rax
+    push rbx
+    push rdx
+    
+    ; Fill with spaces
+    lea rdi, [frame_buffer]
+    mov rcx, (80 * 24) + 24  ; 80 cols * 24 rows + 24 newlines
+    mov al, ' '
+    rep stosb
+    
+    ; Reset pointer to start
+    lea rdi, [frame_buffer]
+    
+    ; Draw top border
+    mov byte [rdi], '+'
+    mov rcx, 78
+    mov al, '-'
+    rep stosb
+    mov byte [rdi], '+'
+    mov byte [rdi+1], 10
+    add rdi, 2
+    
+    ; Draw middle rows
+    mov bl, 22  ; 22 middle rows (24 total - 2 borders)
+.middle_rows:
+    mov byte [rdi], '|'
+    add rdi, 79  ; Move to end of line
+    mov byte [rdi], '|'
+    mov byte [rdi+1], 10
+    add rdi, 2
+    dec bl
+    jnz .middle_rows
+    
+    ; Draw bottom border
+    mov byte [rdi], '+'
+    mov rcx, 78
+    mov al, '-'
+    rep stosb
+    mov byte [rdi], '+'
+    mov byte [rdi+1], 10
+    
+    ; Null terminate
+    mov byte [frame_buffer + (80 * 24) + 23], 0
+    
+    pop rdx
+    pop rbx
+    pop rax
+    pop rcx
+    pop rdi
+    ret
+
+; Draw a paddle in the frame buffer
 ; r8b = y position, r9b = x position
 draw_paddle:
     push rax
@@ -179,27 +255,32 @@ draw_paddle:
     push rcx
     push rdx
     push rsi
+    push rdi
     
-    mov bl, PADDLE_HEIGHT
+    ; Calculate position in frame buffer
+    ; Each row is 81 bytes (80 chars + newline)
+    xor rax, rax
+    mov al, r8b
+    dec al  ; Convert to 0-based index
+    mov bl, 81
+    mul bl  ; ax = y * 81
     
+    lea rdi, [frame_buffer]
+    add rdi, rax
+    
+    mov al, r9b
+    dec al  ; Convert to 0-based x position
+    add rdi, rax  ; Add x offset
+    
+    ; Draw paddle in the frame buffer
+    mov rcx, PADDLE_HEIGHT
+    mov al, '█'  ; Use a solid block for better visibility
 .draw_loop:
-    ; Set cursor position
-    call set_cursor_pos
+    mov [rdi], al
+    add rdi, 81  ; Move to next line
+    loop .draw_loop
     
-    ; Draw paddle character
-    mov rax, SYS_WRITE
-    mov rdi, STDOUT
-    mov rsi, PADDLE_CHAR
-    mov rdx, 1
-    push rdx
-    syscall
-    pop rdx
-    
-    ; Move to next line
-    inc r8b
-    dec bl
-    jnz .draw_loop
-    
+    pop rdi
     pop rsi
     pop rdx
     pop rcx
@@ -207,36 +288,53 @@ draw_paddle:
     pop rax
     ret
 
-; Draw the ball
+; Draw the ball in the frame buffer
 draw_ball:
     push rax
+    push rbx
     push rdi
-    push rsi
-    push rdx
     
-    ; Set cursor position
-    call set_cursor_pos
+    ; Calculate position in frame buffer
+    ; Each row is 81 bytes (80 chars + newline)
+    xor rax, rax
+    mov al, [ball_y]
+    dec al  ; Convert to 0-based index
+    mov bl, 81
+    mul bl  ; ax = y * 81
     
-    ; Draw ball character
-    mov rax, SYS_WRITE
-    mov rdi, STDOUT
-    mov rsi, BALL_CHAR
-    mov rdx, 1
-    syscall
+    lea rdi, [frame_buffer]
+    add rdi, rax
     
-    pop rdx
-    pop rsi
+    mov al, [ball_x]
+    dec al  ; Convert to 0-based x position
+    add rdi, rax  ; Add x offset
+    
+    ; Draw ball
+    mov byte [rdi], '●'  ; Use a solid circle for better visibility
+    
     pop rdi
+    pop rbx
     pop rax
     ret
 
-; Simple delay
+; Small delay
 delay:
     push rcx
-    mov rcx, 0x3FFFFF
-.delay_loop:
-    dec rcx
-    jnz .delay_loop
+    push rdx
+    push rax
+    push rdi
+    push rsi
+    
+    ; Use nanosleep for more precise timing
+    mov rax, SYS_NANOSLEEP
+    mov rdi, delay_time
+    xor rsi, rsi  ; No remaining time
+    syscall
+    
+    pop rsi
+    pop rdi
+    pop rax
+    pop rdx
     pop rcx
     ret
 
@@ -469,6 +567,9 @@ _start:
     ; Set up terminal
     call setup_terminal
     
+    ; Initialize frame buffer
+    call init_frame_buffer
+    
     ; Initialize game state
     mov byte [left_paddle_y], 10    ; Center left paddle
     mov byte [right_paddle_y], 10   ; Center right paddle
@@ -477,23 +578,23 @@ _start:
     mov byte [ball_dx], 1           ; Initial ball direction
     mov byte [ball_dy], 1
     
-    ; Clear screen
+    ; Clear screen and hide cursor
     mov rax, SYS_WRITE
     mov rdi, STDOUT
     mov rsi, CLEAR_SCREEN
     mov rdx, 7
     syscall
-
+    
+    mov rsi, HIDE_CURSOR
+    mov rdx, 6
+    syscall
+    
     mov rsi, debug_game_loop_msg
     call debug_print
 
 game_loop:
-    ; Clear screen
-    mov rax, SYS_WRITE
-    mov rdi, STDOUT
-    mov rsi, CLEAR_SCREEN
-    mov rdx, 7
-    syscall
+    ; Reset frame buffer
+    call init_frame_buffer
     
     ; Handle input
     call handle_input
@@ -501,20 +602,35 @@ game_loop:
     ; Update game state
     call update_ball
     
-    ; Draw left paddle (x=2)
+    ; Draw paddles and ball
     movzx r8, byte [left_paddle_y]
     mov r9b, 2
     call draw_paddle
     
-    ; Draw right paddle (x=77)
     movzx r8, byte [right_paddle_y]
     mov r9b, 77
     call draw_paddle
     
-    ; Draw ball
-    movzx r8, byte [ball_y]
-    movzx r9, byte [ball_x]
     call draw_ball
+    
+    ; Move cursor to top-left (using ANSI escape code)
+    mov rax, SYS_WRITE
+    mov rdi, STDOUT
+    mov rsi, CURSOR_HOME
+    mov rdx, 3
+    syscall
+    
+    ; Draw the frame buffer
+    mov rax, SYS_WRITE
+    mov rdi, STDOUT
+    lea rsi, [frame_buffer]
+    mov rdx, (80 * 24) + 24  ; 80 cols * 24 rows + 24 newlines
+    syscall
+    
+    ; Flush stdout
+    mov rax, SYS_FSYNC
+    mov rdi, STDOUT
+    syscall
     
     ; Small delay
     call delay
