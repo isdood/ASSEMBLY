@@ -2,9 +2,9 @@
 
 # Compiler and flags
 NASM = nasm
-NASMFLAGS = -f elf64
+NASMFLAGS = -f elf64 -g -F dwarf
 LD = ld
-LDFLAGS = -m elf_x86_64
+LDFLAGS = -m elf_x86_64 -dynamic-linker /lib64/ld-linux-x86-64.so.2 -lc -o
 
 # Source and output files
 SRC = pong.asm
@@ -16,7 +16,7 @@ all: $(BIN)
 
 # Build the executable
 $(BIN): $(OBJ)
-	$(LD) $(LDFLAGS) -o $@ $<
+	$(LD) $(LDFLAGS) $@ $< -I/lib64/ld-linux-x86-64.so.2
 
 # Compile assembly to object file
 $(OBJ): $(SRC)
@@ -26,4 +26,4 @@ $(OBJ): $(SRC)
 clean:
 	rm -f $(OBJ) $(BIN)
 
-.PHONY: all clean 
+.PHONY: all clean
