@@ -10,6 +10,7 @@ section .data
     debug_msg_len   equ $ - debug_msg
     debug_msg2      db 'Terminal setup complete, entering game loop...', 10
     debug_msg2_len  equ $ - debug_msg2
+    newline         db 10
     
     ; Game constants
     SCREEN_WIDTH    equ 80
@@ -34,22 +35,15 @@ section .data
     ESCAPE          equ 0x1b
     BRACKET         equ '['
     
-    ; Terminal control constants
-    STDIN           equ 0
-    ICANON          equ 2
-    ECHO            equ 8
-    
     ; System call numbers
     SYS_READ        equ 0
     SYS_WRITE       equ 1
-    SYS_IOCTL       equ 16
     SYS_NANOSLEEP   equ 35
     SYS_EXIT        equ 60
     
-    ; ioctl commands
-    TCGETS          equ 0x5401
-    TCSETS          equ 0x5402
-    FIONREAD        equ 0x541B
+    ; File descriptors
+    STDIN           equ 0
+    STDOUT          equ 1
 
 section .bss
     ; Game state
@@ -159,60 +153,43 @@ draw_ball:
 section .text
 global _start
 
-; Set terminal to non-canonical mode
-disable_canonical_mode:
-    push rbp
-    mov rbp, rsp
-    sub rsp, 60                 ; Allocate space for termios structure (60 bytes)
+; Print a newline character
+print_newline:
+    push rax
+    push rdi
+    push rsi
+    push rdx
     
-    ; Get current terminal settings
-    mov rax, SYS_IOCTL
-    mov rdi, STDIN
-    mov rsi, TCGETS
-    lea rdx, [rsp]             ; Use stack space for termios
+    mov rax, SYS_WRITE
+    mov rdi, STDOUT
+    mov rsi, newline
+    mov rdx, 1
     syscall
     
-    ; Disable canonical mode and echo
-    and dword [rsp + 12], ~(ICANON | ECHO)  ; c_lflag is at offset 12
-    
-    ; Set minimum number of characters for non-canonical read to 1
-    mov byte [rsp + 24 + 6], 1  ; VMIN (c_cc[6])
-    mov byte [rsp + 24 + 7], 0  ; VTIME (c_cc[7])
-    
-    ; Apply new terminal settings
-    mov rax, SYS_IOCTL
-    mov rdi, STDIN
-    mov rsi, TCSETS
-    lea rdx, [rsp]             ; Use stack space for termios
-    syscall
-    
-    mov rsp, rbp
-    pop rbp
+    pop rdx
+    pop rsi
+    pop rdi
+    pop rax
     ret
 
-; Restore terminal to canonical mode (not used in this version)
-restore_canonical_mode:
+; Simple delay function (not using nanosleep for now)
+delay:
+    push rcx
+    mov rcx, 10000000
+.delay_loop:
+    dec rcx
+    jnz .delay_loop
+    pop rcx
     ret
 
-; Read a single character from stdin
-; Returns: al = character read (0 if no character available)
+; Read a single character from stdin (blocking)
+; Returns: al = character read
 read_char:
     push rdi
     push rsi
     push rdx
     
-    ; First check if there's any input available
-    mov rax, SYS_IOCTL
-    mov rdi, STDIN
-    mov rsi, FIONREAD
-    lea rdx, [rsp-8]            ; Use stack space for result
-    syscall
-    
-    ; If no characters available, return 0
-    cmp qword [rsp-8], 0
-    jle .no_input
-    
-    ; Read one character
+    ; Read one character (blocking)
     mov rax, SYS_READ
     mov rdi, STDIN
     lea rsi, [input_char]
@@ -221,12 +198,7 @@ read_char:
     
     ; Return the character
     mov al, [input_char]
-    jmp .done
     
-.no_input:
-    xor eax, eax                ; Return 0 if no input
-    
-.done:
     pop rdx
     pop rsi
     pop rdi
@@ -332,21 +304,18 @@ _start:
     mov rdx, debug_msg_len
     syscall
 
-    ; Set up terminal
-    call disable_canonical_mode
-    
-    ; Hide cursor
-    mov rax, 1
-    mov rdi, 1
-    mov rsi, HIDE_CURSOR
-    mov rdx, 6
-    syscall
-    
-    ; Debug: Print another message after cursor hide
-    mov rax, 1                      ; sys_write
-    mov rdi, 1                      ; stdout
+    ; Print debug message
+    mov rax, SYS_WRITE
+    mov rdi, STDOUT
     mov rsi, debug_msg2
     mov rdx, debug_msg2_len
+    syscall
+    
+    ; Print initial screen
+    mov rax, SYS_WRITE
+    mov rdi, STDOUT
+    mov rsi, CLEAR_SCREEN
+    mov rdx, 7
     syscall
 
 game_loop:
@@ -385,38 +354,16 @@ game_loop:
     mov r9b, [ball_x]
     call draw_ball
 
-    ; Small delay (adjust as needed for game speed)
-    push rdi
-    push rsi
-    
-    ; Set up timespec for nanosleep
-    sub rsp, 16
-    mov qword [rsp], 0          ; seconds
-    mov qword [rsp+8], 50000000 ; nanoseconds (50ms)
-    
-    mov rax, SYS_NANOSLEEP
-    mov rdi, rsp                ; req (requested time)
-    xor rsi, rsi                ; rem (remaining time, not used)
-    syscall
-    
-    add rsp, 16
-    pop rsi
-    pop rdi
+    ; Simple delay
+    call delay
 
     jmp game_loop
 
 exit:
-    ; Restore terminal settings
-    call restore_canonical_mode
+    ; Print newline before exiting
+    call print_newline
     
-    ; Show cursor before exiting
-    mov rax, 1
-    mov rdi, 1
-    mov rsi, SHOW_CURSOR
-    mov rdx, 6
-    syscall
-
     ; Exit program
-    mov rax, 60
+    mov rax, SYS_EXIT
     xor rdi, rdi
     syscall 
