@@ -1,17 +1,7 @@
-; Pong Game in x86_64 Assembly
-; A simple terminal-based Pong implementation
+; Pong Game in x86_64 Assembly (Simplified)
+; A basic terminal-based Pong implementation
 
 section .data
-    ; Debug messages
-    debug_loop      db 'Screen cleared, drawing frame...', 10
-    debug_loop_len  equ $ - debug_loop
-    loop_count      db 0
-    debug_msg       db 'Starting Pong game...', 10
-    debug_msg_len   equ $ - debug_msg
-    debug_msg2      db 'Terminal setup complete, entering game loop...', 10
-    debug_msg2_len  equ $ - debug_msg2
-    newline         db 10
-    
     ; Game constants
     SCREEN_WIDTH    equ 80
     SCREEN_HEIGHT   equ 24
@@ -38,12 +28,15 @@ section .data
     ; System call numbers
     SYS_READ        equ 0
     SYS_WRITE       equ 1
-    SYS_NANOSLEEP   equ 35
     SYS_EXIT        equ 60
     
     ; File descriptors
     STDIN           equ 0
     STDOUT          equ 1
+    
+    ; Game state
+    game_title      db 'PONG GAME - Press Q to quit', 10, 0
+    game_title_len  equ $ - game_title - 1  ; Exclude null terminator
 
 section .bss
     ; Game state
@@ -153,8 +146,10 @@ draw_ball:
 section .text
 global _start
 
-; Print a newline character
-print_newline:
+; Print a string to stdout
+; rsi = string address
+; rdx = string length
+print_string:
     push rax
     push rdi
     push rsi
@@ -162,8 +157,6 @@ print_newline:
     
     mov rax, SYS_WRITE
     mov rdi, STDOUT
-    mov rsi, newline
-    mov rdx, 1
     syscall
     
     pop rdx
@@ -172,7 +165,7 @@ print_newline:
     pop rax
     ret
 
-; Simple delay function (not using nanosleep for now)
+; Simple delay function
 delay:
     push rcx
     mov rcx, 10000000
@@ -180,112 +173,6 @@ delay:
     dec rcx
     jnz .delay_loop
     pop rcx
-    ret
-
-; Read a single character from stdin (blocking)
-; Returns: al = character read
-read_char:
-    push rdi
-    push rsi
-    push rdx
-    
-    ; Read one character (blocking)
-    mov rax, SYS_READ
-    mov rdi, STDIN
-    lea rsi, [input_char]
-    mov rdx, 1
-    syscall
-    
-    ; Return the character
-    mov al, [input_char]
-    
-    pop rdx
-    pop rsi
-    pop rdi
-    ret
-
-; Check for keyboard input and update game state
-handle_input:
-    push rbx
-    
-    ; Keep reading characters until input queue is empty
-.input_loop:
-    call read_char
-    test al, al
-    jz .input_done             ; No more input
-    
-    ; Check for 'q' to quit
-    cmp al, KEY_Q
-    je exit
-    
-    ; Check for 'w' (left paddle up)
-    cmp al, KEY_W
-    jne .not_w
-    
-    ; Move left paddle up (but not above top)
-    mov bl, [left_paddle_y]
-    cmp bl, 1
-    jle .input_loop
-    dec byte [left_paddle_y]
-    jmp .input_loop
-    
-.not_w:
-    ; Check for 's' (left paddle down)
-    cmp al, KEY_S
-    jne .not_s
-    
-    ; Move left paddle down (but not below bottom)
-    mov bl, [left_paddle_y]
-    add bl, PADDLE_HEIGHT
-    cmp bl, SCREEN_HEIGHT
-    jge .input_loop
-    inc byte [left_paddle_y]
-    jmp .input_loop
-    
-.not_s:
-    ; Check for escape sequence (arrow keys)
-    cmp al, ESCAPE
-    jne .input_loop
-    
-    ; Read the next byte of the escape sequence
-    call read_char
-    test al, al
-    jz .input_done
-    
-    cmp al, BRACKET
-    jne .input_loop
-    
-    ; Read the arrow key
-    call read_char
-    test al, al
-    jz .input_done
-    
-    ; Check for up arrow (right paddle up)
-    cmp al, KEY_UP
-    jne .not_up
-    
-    ; Move right paddle up (but not above top)
-    mov bl, [right_paddle_y]
-    cmp bl, 1
-    jle .input_loop
-    dec byte [right_paddle_y]
-    jmp .input_loop
-    
-.not_up:
-    ; Check for down arrow (right paddle down)
-    cmp al, KEY_DOWN
-    jne .input_loop
-    
-    ; Move right paddle down (but not below bottom)
-    mov bl, [right_paddle_y]
-    add bl, PADDLE_HEIGHT
-    cmp bl, SCREEN_HEIGHT
-    jge .input_loop
-    inc byte [right_paddle_y]
-    jmp .input_loop
-    
-.input_done:
-    pop rbx
     ret
 
 _start:
@@ -297,47 +184,102 @@ _start:
     mov byte [ball_dx], 1           ; Initial ball direction
     mov byte [ball_dy], 1
 
-    ; Debug: Print a message to see if we get here
-    mov rax, 1                      ; sys_write
-    mov rdi, 1                      ; stdout
-    mov rsi, debug_msg
-    mov rdx, debug_msg_len
-    syscall
-
-    ; Print debug message
-    mov rax, SYS_WRITE
-    mov rdi, STDOUT
-    mov rsi, debug_msg2
-    mov rdx, debug_msg2_len
-    syscall
-    
-    ; Print initial screen
-    mov rax, SYS_WRITE
-    mov rdi, STDOUT
+    ; Clear screen
     mov rsi, CLEAR_SCREEN
     mov rdx, 7
-    syscall
+    call print_string
+    
+    ; Print game title
+    mov rsi, game_title
+    mov rdx, game_title_len
+    call print_string
 
 game_loop:
-    ; Debug: Print loop counter
-    inc byte [loop_count]
-    
-    ; Handle keyboard input
-    call handle_input
-    
-    ; Clear screen
-    mov rax, 1
-    mov rdi, 1
+    ; Clear screen and redraw everything
     mov rsi, CLEAR_SCREEN
     mov rdx, 7
+    call print_string
+    
+    ; Print game title
+    mov rsi, game_title
+    mov rdx, game_title_len
+    call print_string
+    
+    ; Handle keyboard input (non-blocking)
+    mov rax, SYS_READ
+    mov rdi, STDIN
+    mov rsi, input_char
+    mov rdx, 1
+    mov r10, 0x541B  ; FIONREAD
+    mov r8, 0        ; Non-blocking mode
     syscall
     
-    ; Debug: Check if clear screen worked
-    mov rax, 1
-    mov rdi, 1
-    mov rsi, debug_loop
-    mov rdx, debug_loop_len
+    ; Check if any input was read
+    cmp rax, 1
+    jne .no_input
+    
+    ; Check for 'q' to quit
+    cmp byte [input_char], 'q'
+    je exit
+    
+    ; Check for 'w' (left paddle up)
+    cmp byte [input_char], 'w'
+    jne .not_w
+    cmp byte [left_paddle_y], 1
+    jle .not_w
+    dec byte [left_paddle_y]
+    jmp .no_input
+    
+.not_w:
+    ; Check for 's' (left paddle down)
+    cmp byte [input_char], 's'
+    jne .not_s
+    mov bl, [left_paddle_y]
+    add bl, PADDLE_HEIGHT
+    cmp bl, SCREEN_HEIGHT
+    jge .no_input
+    inc byte [left_paddle_y]
+    jmp .no_input
+    
+.not_s:
+    ; Check for up arrow (right paddle up)
+    cmp byte [input_char], 0x1B  ; ESC
+    jne .no_input
+    
+    ; Read the next two bytes of the escape sequence
+    mov rax, SYS_READ
+    mov rdi, STDIN
+    mov rsi, input_char
+    mov rdx, 2  ; Read 2 bytes for the arrow key sequence
     syscall
+    
+    cmp rax, 2
+    jne .no_input
+    
+    cmp byte [input_char], '['
+    jne .no_input
+    
+    cmp byte [input_char+1], 'A'  ; Up arrow
+    jne .not_up
+    
+    ; Move right paddle up
+    cmp byte [right_paddle_y], 1
+    jle .no_input
+    dec byte [right_paddle_y]
+    jmp .no_input
+    
+.not_up:
+    cmp byte [input_char+1], 'B'  ; Down arrow
+    jne .no_input
+    
+    ; Move right paddle down
+    mov bl, [right_paddle_y]
+    add bl, PADDLE_HEIGHT
+    cmp bl, SCREEN_HEIGHT
+    jge .no_input
+    inc byte [right_paddle_y]
+
+.no_input:
 
     ; Draw left paddle
     mov r8b, [left_paddle_y]
@@ -353,17 +295,54 @@ game_loop:
     mov r8b, [ball_y]
     mov r9b, [ball_x]
     call draw_ball
-
+    
+    ; Simple ball movement
+    ; Update ball position
+    mov al, [ball_x]
+    add al, [ball_dx]
+    mov [ball_x], al
+    
+    mov al, [ball_y]
+    add al, [ball_dy]
+    mov [ball_y], al
+    
+    ; Bounce off top and bottom
+    cmp byte [ball_y], 1
+    jle .bounce_y
+    cmp byte [ball_y], SCREEN_HEIGHT-1
+    jl .no_bounce_y
+.bounce_y:
+    neg byte [ball_dy]
+    
+.no_bounce_y:
+    ; Bounce off left and right (temporary, will add scoring later)
+    cmp byte [ball_x], 1
+    jle .bounce_x
+    cmp byte [ball_x], SCREEN_WIDTH-2
+    jl .no_bounce_x
+.bounce_x:
+    neg byte [ball_dx]
+    
+.no_bounce_x:
     ; Simple delay
     call delay
 
     jmp game_loop
 
 exit:
-    ; Print newline before exiting
-    call print_newline
+    ; Clear screen and show cursor
+    mov rsi, CLEAR_SCREEN
+    mov rdx, 7
+    call print_string
+    
+    ; Move cursor to bottom of screen
+    mov rsi, .cursor_bottom
+    mov rdx, 3
+    call print_string
     
     ; Exit program
     mov rax, SYS_EXIT
     xor rdi, rdi
     syscall 
+    
+.cursor_bottom db 27, '[H', 0
